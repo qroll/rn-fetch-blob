@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.support.annotation.NonNull;
 import android.util.Base64;
+import android.util.Log;
 
 import com.RNFetchBlob.Response.RNFetchBlobDefaultResp;
 import com.RNFetchBlob.Response.RNFetchBlobFileResp;
@@ -188,11 +189,75 @@ public class RNFetchBlobReq extends BroadcastReceiver implements Runnable {
                     String key = it.nextKey();
                     req.addRequestHeader(key, headers.getString(key));
                 }
+                // NOTE: this is the original implementation
+                // Context appCtx = RNFetchBlob.RCTContext.getApplicationContext();
+                // DownloadManager dm = (DownloadManager) appCtx.getSystemService(Context.DOWNLOAD_SERVICE);
+                // downloadManagerId = dm.enqueue(req);
+                // androidDownloadManagerTaskTable.put(taskId, Long.valueOf(downloadManagerId));
+                // appCtx.registerReceiver(this, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+
+                // NOTE: on some devices, redownloading a file from the same url returns the same download id
+                // The onReceive listener never fires, and the promise never resolves
+                // Some possible workarounds:
+                // 1. If download status is already successful, skip download.
+                //    In userland, open the existing file - this is assuming file never changes (depends on the use case).
+                // 2. Delete the existing entry using the download id.
+                //    Existing file may be deleted (depends on model). Adds a running count to the download.
+                // 3. Before downloading, delete entry for this uri.
+                //    Existing file is deleted (depends on model). Does not add running count.
+
+                // This is approach 3
+                // /*
                 Context appCtx = RNFetchBlob.RCTContext.getApplicationContext();
                 DownloadManager dm = (DownloadManager) appCtx.getSystemService(Context.DOWNLOAD_SERVICE);
+
+                // Find and remove any existing entries pointing to the same url
+                DownloadManager.Query query = new DownloadManager.Query();
+                query.setFilterByStatus(DownloadManager.STATUS_SUCCESSFUL);
+                Cursor c = dm.query(query);
+                while (c != null && c.moveToNext()) {
+                    String requestUri = c.getString(c.getColumnIndex(DownloadManager.COLUMN_URI));
+                    if (requestUri.equals(url)) {
+                        long id = c.getInt(c.getColumnIndex(DownloadManager.COLUMN_ID));
+                        dm.remove(id);
+                    }
+                }
+
+                // Enqueue the new download request
                 downloadManagerId = dm.enqueue(req);
+                Log.d("RNFetchBlob", "enqueued to download manager with id " + downloadManagerId);
                 androidDownloadManagerTaskTable.put(taskId, Long.valueOf(downloadManagerId));
                 appCtx.registerReceiver(this, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+                // */
+
+                // This is approach 2
+                /*
+                downloadManagerId = dm.enqueue(req);
+                Log.d("RNFetchBlob", "enqueued to download manager with id " + downloadManagerId);
+
+                // Check if request already exists
+                DownloadManager.Query query = new DownloadManager.Query();
+                query.setFilterById(downloadManagerId);
+                dm.query(query);
+                Cursor c = dm.query(query);
+
+                if (c != null && c.moveToFirst()) {
+                    int statusCode = c.getInt(c.getColumnIndex(DownloadManager.COLUMN_STATUS));
+                    Log.d("RNFetchBlobReq", "what is the status of the id? " + statusCode);
+                    if (statusCode == DownloadManager.STATUS_SUCCESSFUL) {
+                        Log.d("RNFetchBlobReq", "somehow the previous url request was cached");
+                        dm.remove(downloadManagerId);
+
+                        // Enqueue the new download request
+                        downloadManagerId = dm.enqueue(req);
+                        Log.d("RNFetchBlob", "enqueued to download manager with id " + downloadManagerId);
+                    }
+                }
+
+                androidDownloadManagerTaskTable.put(taskId, Long.valueOf(downloadManagerId));
+                appCtx.registerReceiver(this, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+                */
+
                 return;
             }
 
