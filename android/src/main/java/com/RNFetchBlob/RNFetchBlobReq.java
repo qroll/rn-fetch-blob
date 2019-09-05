@@ -780,6 +780,8 @@ public class RNFetchBlobReq extends BroadcastReceiver implements Runnable {
                         this.callback.invoke(null, RNFetchBlobConst.RNFB_RESPONSE_PATH, filePath);
                 }
 
+                // NOTE: unregister listener - is this the cause of the multiple callback invocation?
+                appCtx.unregisterReceiver(this);
             }
         }
     }
